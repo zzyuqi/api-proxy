@@ -1,0 +1,64 @@
+version: '3.8'
+
+services:
+  # MySQL Database
+  mysql:
+    image: mysql:8.0
+    container_name: api-proxy-mysql
+    ports:
+      - "3311:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=123456
+      - MYSQL_DATABASE=api_proxy
+    volumes:
+      - mysql_data:/var/lib/mysql
+    restart: unless-stopped
+    networks:
+      - api-network
+    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+
+  # API Proxy Backend
+  api-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: api-proxy
+    ports:
+      - "1100:1100"
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - SERVER_PORT=1100
+      # 使用Docker网络中的MySQL容器名
+      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/api_proxy?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&createDatabaseIfNotExist=true
+      - SPRING_DATASOURCE_USERNAME=root
+      - SPRING_DATASOURCE_PASSWORD=123456
+      - PROXY_ADMIN_USERNAME=admin
+      - PROXY_ADMIN_PASSWORD=admin123
+    depends_on:
+      - mysql
+    restart: unless-stopped
+    networks:
+      - api-network
+
+  # Frontend Nginx
+  frontend:
+    image: nginx:alpine
+    container_name: api-proxy-web
+    ports:
+      - "1101:80"
+    volumes:
+      - ./dist:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api-proxy
+    restart: unless-stopped
+    networks:
+      - api-network
+
+volumes:
+  mysql_data:
+    driver: local
+
+networks:
+  api-network:
+    driver: bridge
