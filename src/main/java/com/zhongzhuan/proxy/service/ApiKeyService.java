@@ -17,11 +17,12 @@ public class ApiKeyService {
         this.apiKeyRepository = apiKeyRepository;
     }
 
-    public ApiKey createKey(String name) {
+    public ApiKey createKey(String name, Long userId) {
         ApiKey apiKey = new ApiKey();
         apiKey.setName(name);
         apiKey.setKeyValue(generateKey());
         apiKey.setEnabled(true);
+        apiKey.setUserId(userId);
         return apiKeyRepository.save(apiKey);
     }
 

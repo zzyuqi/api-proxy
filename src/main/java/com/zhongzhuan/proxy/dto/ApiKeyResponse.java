@@ -12,6 +12,7 @@ public class ApiKeyResponse {
     private String name;
     private Boolean enabled;
     private LocalDateTime createdAt;
+    private Long userId;
 
     public static ApiKeyResponse from(ApiKey apiKey) {
         ApiKeyResponse resp = new ApiKeyResponse();
@@ -21,6 +22,7 @@ public class ApiKeyResponse {
         resp.setName(apiKey.getName());
         resp.setEnabled(apiKey.getEnabled());
         resp.setCreatedAt(apiKey.getCreatedAt());
+        resp.setUserId(apiKey.getUserId());
         return resp;
     }
 
@@ -43,4 +45,6 @@ public class ApiKeyResponse {
     public void setEnabled(Boolean enabled) { this.enabled = enabled; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+    public Long getUserId() { return userId; }
+    public void setUserId(Long userId) { this.userId = userId; }
 }

@@ -8,6 +8,8 @@ public class LogQueryParams {
 
     private Long routeId;
     private Integer statusCode;
+    private Long userId;
+    private String username;
     private Integer page = 0;
     private Integer size = 20;
 
@@ -19,6 +21,10 @@ public class LogQueryParams {
     public void setRouteId(Long routeId) { this.routeId = routeId; }
     public Integer getStatusCode() { return statusCode; }
     public void setStatusCode(Integer statusCode) { this.statusCode = statusCode; }
+    public Long getUserId() { return userId; }
+    public void setUserId(Long userId) { this.userId = userId; }
+    public String getUsername() { return username; }
+    public void setUsername(String username) { this.username = username; }
     public Integer getPage() { return page; }
     public void setPage(Integer page) { this.page = page; }
     public Integer getSize() { return size; }

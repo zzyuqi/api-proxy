@@ -32,14 +32,12 @@ public class RelayService {
                 .method(method)
                 .uri(targetUrl);
 
-        // Forward relevant headers (skip host, content-length, etc.)
         headers.forEach((name, values) -> {
             if (shouldForwardHeader(name)) {
                 values.forEach(value -> requestSpec.header(name, value));
             }
         });
 
-        // Add body if present
         WebClient.RequestHeadersSpec<?> spec;
         if (body != null && body.length > 0) {
             spec = requestSpec.bodyValue(body);

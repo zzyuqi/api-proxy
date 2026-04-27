@@ -1,5 +1,9 @@
 package com.zhongzhuan.proxy.controller;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.zhongzhuan.proxy.model.ApiKey;
 import com.zhongzhuan.proxy.model.ProxyUser;
 import com.zhongzhuan.proxy.model.RequestLog;
@@ -23,19 +27,26 @@ public class RelayController {
     private final RateLimitService rateLimitService;
     private final LogService logService;
     private final UserService userService;
+    private final UserRateLimitService userRateLimitService;
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    // 系统提示词，控制回复简洁高效
+    private static final String SYSTEM_PROMPT = "回复要精简高效，去除冗余内容和注释，直接给出最优解。";
 
     public RelayController(RouteService routeService,
                            RelayService relayService,
                            ApiKeyService apiKeyService,
                            RateLimitService rateLimitService,
                            LogService logService,
-                           UserService userService) {
+                           UserService userService,
+                           UserRateLimitService userRateLimitService) {
         this.routeService = routeService;
         this.relayService = relayService;
         this.apiKeyService = apiKeyService;
         this.rateLimitService = rateLimitService;
         this.logService = logService;
         this.userService = userService;
+        this.userRateLimitService = userRateLimitService;
     }
 
     @RequestMapping("/api/proxy/**")
@@ -70,9 +81,21 @@ public class RelayController {
                 if (proxyUser == null) {
                     return error(403, "用户 Token 无效或已禁用");
                 }
-                // Check token balance
-                if (proxyUser.getTokenBalance() - proxyUser.getTokenUsed() <= 0) {
-                    return error(402, "Token 余额不足，请联系管理员分配额度");
+                // Check account expiration
+                if (proxyUser.getExpireAt() != null &&
+                    proxyUser.getExpireAt().isBefore(java.time.LocalDateTime.now())) {
+                    return error(403, "账号已过期，请联系管理员");
+                }
+                // Check token expiration (1 hour)
+                if (proxyUser.getLastActiveAt() != null &&
+                    proxyUser.getLastActiveAt().plusHours(1).isBefore(java.time.LocalDateTime.now())) {
+                    return error(403, "登录已过期，请重新登录");
+                }
+                // Update last active time
+                userService.updateLastActive(proxyUser.getId());
+                // Check request quota
+                if (proxyUser.getRequestCount() - proxyUser.getRequestsUsed() <= 0) {
+                    return error(402, "请求次数已用完，请联系管理员分配额度");
                 }
             } else if (apiKeyValue != null && !apiKeyValue.isEmpty()) {
                 ApiKey apiKey = apiKeyService.validateKey(apiKeyValue).orElse(null);
@@ -80,8 +103,48 @@ public class RelayController {
                     return error(403, "API Key 无效或已禁用");
                 }
                 apiKeyId = apiKey.getId();
+                // If API Key is bound to a user, use that user for quota deduction
+                if (apiKey.getUserId() != null) {
+                    proxyUser = userService.getUser(apiKey.getUserId());
+                    if (proxyUser == null) {
+                        return error(403, "API Key 关联的用户不存在");
+                    }
+                    if (!proxyUser.getEnabled()) {
+                        return error(403, "用户已被禁用");
+                    }
+                    // Check account expiration
+                    if (proxyUser.getExpireAt() != null &&
+                        proxyUser.getExpireAt().isBefore(java.time.LocalDateTime.now())) {
+                        return error(403, "账号已过期，请联系管理员");
+                    }
+                    // Check token expiration (1 hour)
+                    if (proxyUser.getLastActiveAt() != null &&
+                        proxyUser.getLastActiveAt().plusHours(1).isBefore(java.time.LocalDateTime.now())) {
+                        return error(403, "登录已过期，请重新登录");
+                    }
+                    // Update last active time
+                    userService.updateLastActive(proxyUser.getId());
+                    // Check user request quota
+                    if (proxyUser.getRequestCount() - proxyUser.getRequestsUsed() <= 0) {
+                        return error(402, "请求次数已用完，请联系管理员分配额度");
+                    }
+                }
             } else {
                 return error(401, "缺少认证信息 (X-User-Token 或 X-API-Key)");
+            }
+        }
+
+        // Check concurrent limit
+        if (proxyUser != null && proxyUser.getConcurrentLimit() != null && proxyUser.getConcurrentLimit() > 0) {
+            if (!userRateLimitService.tryAcquireConcurrent(proxyUser.getId(), proxyUser.getConcurrentLimit())) {
+                return error(429, "并发请求数超限，当前最大并发: " + proxyUser.getConcurrentLimit());
+            }
+        }
+
+        // Check hourly limit
+        if (proxyUser != null && proxyUser.getHourlyLimit() != null && proxyUser.getHourlyLimit() > 0) {
+            if (!userRateLimitService.tryAcquireHourly(proxyUser.getId(), proxyUser.getHourlyLimit())) {
+                return error(429, "请求频率超限，每小时最大请求数: " + proxyUser.getHourlyLimit());
             }
         }
 
@@ -122,6 +185,9 @@ public class RelayController {
             body = new byte[0];
         }
 
+        // Inject system prompt to control response length (for chat completions)
+        body = injectSystemPrompt(body);
+
         // Append query string if present
         String queryString = request.getQueryString();
         if (queryString != null && !queryString.isEmpty()) {
@@ -134,20 +200,24 @@ public class RelayController {
         ResponseEntity<byte[]> response = relayService.forwardRequest(
                 route, targetUrl, httpMethod, headers, body);
 
-        // Token usage tracking — parse MiniMax response for usage.total_tokens
-        long tokensUsed = 0;
-        if (proxyUser != null && response.getBody() != null && response.getStatusCode().is2xxSuccessful()) {
-            tokensUsed = extractTokenUsage(response.getBody());
-            if (tokensUsed > 0) {
-                userService.deductTokens(proxyUser.getId(), tokensUsed,
-                        "请求 " + fullPath + " 消耗 " + tokensUsed + " tokens");
-            }
+        // Release concurrent permit
+        if (proxyUser != null && proxyUser.getConcurrentLimit() != null && proxyUser.getConcurrentLimit() > 0) {
+            userRateLimitService.releaseConcurrent(proxyUser.getId());
+        }
+
+        // Request count tracking — increment usage on successful/failure response from proxy target
+        // Count all responses except 5xx server errors
+        if (proxyUser != null && response.getStatusCode().value() < 500) {
+            userService.incrementRequestUsage(proxyUser.getId(),
+                    "请求 " + fullPath);
         }
 
         // Async log
         RequestLog log = new RequestLog();
         log.setRouteId(route.getId());
         log.setApiKeyId(apiKeyId);
+        log.setUserId(proxyUser != null ? proxyUser.getId() : null);
+        log.setUsername(proxyUser != null ? proxyUser.getUsername() : null);
         log.setRequestPath(fullPath);
         log.setRequestMethod(method);
         log.setResponseStatus(response.getStatusCode().value());
@@ -158,27 +228,63 @@ public class RelayController {
         return response;
     }
 
-    private long extractTokenUsage(byte[] responseBody) {
-        try {
-            String json = new String(responseBody, StandardCharsets.UTF_8);
-            // Simple JSON parsing for {"usage":{"total_tokens": N }}
-            int usageIdx = json.indexOf("\"usage\"");
-            if (usageIdx < 0) return 0;
-            int totalIdx = json.indexOf("\"total_tokens\"", usageIdx);
-            if (totalIdx < 0) {
-                totalIdx = json.indexOf("\"totalTokens\"", usageIdx);
-            }
-            if (totalIdx < 0) return 0;
-            int colonIdx = json.indexOf(':', totalIdx);
-            int endIdx = json.indexOf(',', colonIdx);
-            if (endIdx < 0) endIdx = json.indexOf('}', colonIdx);
-            if (colonIdx > 0 && endIdx > colonIdx) {
-                return Long.parseLong(json.substring(colonIdx + 1, endIdx).trim());
-            }
-        } catch (Exception e) {
-            // Parsing failure is non-critical
+    /**
+     * 在请求体中的 messages 数组最前面插入系统提示词，并限制上下文消息数量
+     */
+    private byte[] injectSystemPrompt(byte[] body) {
+        if (body == null || body.length == 0) {
+            return body;
         }
-        return 0;
+
+        try {
+            String jsonStr = new String(body, StandardCharsets.UTF_8);
+            JsonNode root = objectMapper.readTree(jsonStr);
+
+            JsonNode messagesNode = root.get("messages");
+            if (messagesNode == null || !messagesNode.isArray()) {
+                return body;
+            }
+
+            ArrayNode messages = (ArrayNode) messagesNode;
+            if (messages.size() == 0) {
+                return body;
+            }
+
+            // 提取系统消息（如果存在）
+            ObjectNode systemMsg = null;
+            ArrayNode nonSystemMessages = objectMapper.createArrayNode();
+
+            for (JsonNode msg : messages) {
+                if ("system".equals(msg.path("role").asText())) {
+                    if (systemMsg == null) {
+                        systemMsg = (ObjectNode) msg.deepCopy();
+                    }
+                } else {
+                    nonSystemMessages.add(msg.deepCopy());
+                }
+            }
+
+            // 限制消息数量（保留最近的消息）
+            int maxMessages = 20;
+            ArrayNode limitedMessages = objectMapper.createArrayNode();
+            int start = Math.max(0, nonSystemMessages.size() - maxMessages);
+            for (int i = start; i < nonSystemMessages.size(); i++) {
+                limitedMessages.add(nonSystemMessages.get(i));
+            }
+
+            // 构建新消息数组：系统提示 + 限制后的消息
+            ArrayNode newMessages = objectMapper.createArrayNode();
+            ObjectNode promptMsg = objectMapper.createObjectNode();
+            promptMsg.put("role", "system");
+            promptMsg.put("content", SYSTEM_PROMPT);
+            newMessages.add(promptMsg);
+            limitedMessages.forEach(newMessages::add);
+
+            ((ObjectNode) root).set("messages", newMessages);
+            return objectMapper.writeValueAsBytes(root);
+        } catch (Exception e) {
+            return body;
+        }
     }
 
     private ResponseEntity<byte[]> error(int status, String msg) {
@@ -190,7 +296,8 @@ public class RelayController {
         return !lower.equals("host")
                 && !lower.equals("content-length")
                 && !lower.equals("transfer-encoding")
-                && !lower.equals("connection");
+                && !lower.equals("connection")
+                && !lower.equals("x-api-key");
     }
 
     private String getClientIp(HttpServletRequest request) {

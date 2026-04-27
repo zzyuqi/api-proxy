@@ -17,6 +17,12 @@ public class RequestLog {
     @Column(name = "api_key_id")
     private Long apiKeyId;
 
+    @Column(name = "user_id")
+    private Long userId;
+
+    @Column(name = "username", length = 100)
+    private String username;
+
     @Column(name = "request_path", length = 500)
     private String requestPath;
 
@@ -46,6 +52,10 @@ public class RequestLog {
     public void setRouteId(Long routeId) { this.routeId = routeId; }
     public Long getApiKeyId() { return apiKeyId; }
     public void setApiKeyId(Long apiKeyId) { this.apiKeyId = apiKeyId; }
+    public Long getUserId() { return userId; }
+    public void setUserId(Long userId) { this.userId = userId; }
+    public String getUsername() { return username; }
+    public void setUsername(String username) { this.username = username; }
     public String getRequestPath() { return requestPath; }
     public void setRequestPath(String requestPath) { this.requestPath = requestPath; }
     public String getRequestMethod() { return requestMethod; }

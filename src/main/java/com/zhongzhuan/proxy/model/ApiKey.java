@@ -19,6 +19,9 @@ public class ApiKey {
 
     private Boolean enabled = true;
 
+    @Column(name = "user_id")
+    private Long userId;
+
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
 
@@ -36,4 +39,6 @@ public class ApiKey {
     public Boolean getEnabled() { return enabled; }
     public void setEnabled(Boolean enabled) { this.enabled = enabled; }
     public LocalDateTime getCreatedAt() { return createdAt; }
+    public Long getUserId() { return userId; }
+    public void setUserId(Long userId) { this.userId = userId; }
 }

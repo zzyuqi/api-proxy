@@ -17,7 +17,7 @@ api.interceptors.request.use(config => {
 api.interceptors.response.use(
   res => res,
   err => {
-    if (err.response?.status === 401) {
+    if (err.response?.status === 401 && !err.config.__skipAuthRedirect) {
       localStorage.removeItem('admin_auth')
       window.location.hash = '#/login'
     }
@@ -37,7 +37,7 @@ export const deleteRoute = id => api.delete(`/admin/routes/${id}`)
 
 // API Keys
 export const getApiKeys = () => api.get('/admin/api-keys')
-export const createApiKey = name => api.post('/admin/api-keys', { name })
+export const createApiKey = (name, userId) => api.post('/admin/api-keys', { name, userId })
 export const updateApiKey = (id, data) => api.put(`/admin/api-keys/${id}`, data)
 export const deleteApiKey = id => api.delete(`/admin/api-keys/${id}`)
 
@@ -49,6 +49,8 @@ export const deleteModel = id => api.delete(`/admin/models/${id}`)
 
 // Logs
 export const getLogs = params => api.get('/admin/logs', { params })
+export const deleteLog = id => api.delete(`/admin/logs/${id}`)
+export const deleteLogs = params => api.delete('/admin/logs', { params })
 
 // Users
 export const getUsers = () => api.get('/admin/users')
@@ -56,14 +58,21 @@ export const createUser = data => api.post('/admin/users', data)
 export const updateUser = (id, data) => api.put(`/admin/users/${id}`, data)
 export const deleteUser = id => api.delete(`/admin/users/${id}`)
 export const getUserStats = () => api.get('/admin/users/stats')
+export const generateUser = (passwordLength) => api.post('/admin/users/generate', null, { params: { passwordLength } })
 
 // Token allocation
 export const allocateTokens = (userId, data) => api.post(`/admin/users/${userId}/tokens`, data)
 export const getUserTokenRecords = userId => api.get(`/admin/users/${userId}/tokens`)
 
+// Admin password change
+export const changePassword = (oldPassword, newPassword) => api.post('/admin/change-password', { oldPassword, newPassword })
+
 // Auth (no auth header needed)
 export const userRegister = data => api.post('/auth/register', data)
 export const userLogin = data => api.post('/auth/login', data)
+export const userMe = () => api.get('/auth/me', {
+  headers: { 'X-User-Token': JSON.parse(localStorage.getItem('user_auth') || '{}').userToken }
+})
 
 // Public routes (no auth needed)
 export const getPublicRoutes = () => api.get('/public/routes')

@@ -1,6 +1,7 @@
 package com.zhongzhuan.proxy.config;
 
 import com.zhongzhuan.proxy.repository.AdminUserRepository;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -54,7 +55,13 @@ public class SecurityConfig {
                 .requestMatchers("/swagger-ui/**", "/api-docs/**").permitAll()
                 .anyRequest().permitAll()
             )
-            .httpBasic(Customizer.withDefaults());
+            .httpBasic(basic -> basic
+                .authenticationEntryPoint((request, response, authException) -> {
+                    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    response.setContentType("application/json;charset=UTF-8");
+                    response.getWriter().write("{\"error\":\"用户名或密码错误\"}");
+                })
+            );
 
         return http.build();
     }

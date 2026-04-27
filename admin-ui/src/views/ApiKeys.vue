@@ -15,6 +15,12 @@
     <el-table :data="keys" stripe v-loading="loading" style="width:100%">
       <el-table-column prop="id" label="ID" width="60" />
       <el-table-column prop="name" label="名称" min-width="150" />
+      <el-table-column prop="userId" label="关联用户" width="120">
+        <template #default="{ row }">
+          <span v-if="row.userId">{{ getUserName(row.userId) }}</span>
+          <span v-else style="color:#999">未绑定</span>
+        </template>
+      </el-table-column>
       <el-table-column prop="keyValue" label="Key 值" min-width="280">
         <template #default="{ row }">
           <el-input :model-value="row.keyValue" readonly size="small">
@@ -46,6 +52,12 @@
         <el-form-item label="名称">
           <el-input v-model="form.name" placeholder="给你的 Key 起个名字" />
         </el-form-item>
+        <el-form-item label="绑定用户" v-if="!isEdit">
+          <el-select v-model="form.userId" placeholder="选择用户（不选则不绑定）" clearable style="width:100%">
+            <el-option v-for="u in users" :key="u.id" :label="u.username" :value="u.id" />
+          </el-select>
+          <span style="color:#909399;font-size:12px">绑定用户后，使用此 Key 的请求会扣除该用户的配额</span>
+        </el-form-item>
         <el-form-item label="状态" v-if="isEdit">
           <el-switch
             v-model="form.enabled"
@@ -70,9 +82,10 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { CopyDocument } from '@element-plus/icons-vue'
-import { getApiKeys, createApiKey, updateApiKey, deleteApiKey } from '../api/index.js'
+import { getApiKeys, createApiKey, updateApiKey, deleteApiKey, getUsers } from '../api/index.js'
 
 const keys = ref([])
+const users = ref([])
 const loading = ref(false)
 const dialogVisible = ref(false)
 const isEdit = ref(false)
@@ -82,10 +95,11 @@ const editId = ref(null)
 const form = ref({
   name: '',
   enabled: true,
-  keyValueMasked: ''
+  keyValueMasked: '',
+  userId: null
 })
 
-onMounted(() => fetchKeys())
+onMounted(() => { fetchKeys(); fetchUsers() })
 
 async function fetchKeys() {
   loading.value = true
@@ -96,17 +110,29 @@ async function fetchKeys() {
   loading.value = false
 }
 
+async function fetchUsers() {
+  try {
+    const res = await getUsers()
+    users.value = res.data
+  } catch (e) { /* ignore */ }
+}
+
+function getUserName(userId) {
+  const u = users.value.find(u => u.id === userId)
+  return u ? u.username : userId
+}
+
 function openCreateDialog() {
   isEdit.value = false
   editId.value = null
-  form.value = { name: '', enabled: true, keyValueMasked: '' }
+  form.value = { name: '', enabled: true, keyValueMasked: '', userId: null }
   dialogVisible.value = true
 }
 
 function openEditDialog(row) {
   isEdit.value = true
   editId.value = row.id
-  form.value = { name: row.name, enabled: row.enabled, keyValueMasked: row.keyValueMasked }
+  form.value = { name: row.name, enabled: row.enabled, keyValueMasked: row.keyValueMasked, userId: row.userId }
   dialogVisible.value = true
 }
 
@@ -121,7 +147,7 @@ async function handleSave() {
       await updateApiKey(editId.value, { name: form.value.name, enabled: form.value.enabled })
       ElMessage.success('更新成功')
     } else {
-      const res = await createApiKey(form.value.name)
+      const res = await createApiKey(form.value.name, form.value.userId)
       ElMessage.success(`创建成功: ${res.data.keyValue}`)
     }
     dialogVisible.value = false

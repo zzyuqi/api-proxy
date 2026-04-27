@@ -13,6 +13,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
+import java.security.SecureRandom;
 import java.util.List;
 import java.util.Map;
 
@@ -140,7 +141,7 @@ public class AdminController {
 
     @PostMapping("/api-keys")
     public ResponseEntity<ApiKeyResponse> createApiKey(@Valid @RequestBody ApiKeyRequest request) {
-        ApiKey apiKey = apiKeyService.createKey(request.getName());
+        ApiKey apiKey = apiKeyService.createKey(request.getName(), request.getUserId());
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiKeyResponse.from(apiKey));
     }
 
@@ -182,9 +183,35 @@ public class AdminController {
             spec = spec.and((root, query, cb) ->
                     cb.equal(root.get("responseStatus"), params.getStatusCode()));
         }
+        if (params.getUserId() != null) {
+            spec = spec.and((root, query, cb) ->
+                    cb.equal(root.get("userId"), params.getUserId()));
+        }
+        if (params.getUsername() != null && !params.getUsername().isBlank()) {
+            spec = spec.and((root, query, cb) ->
+                    cb.like(root.get("username"), "%" + params.getUsername() + "%"));
+        }
 
         Page<RequestLog> logs = requestLogRepository.findAll(spec, params.toPageable());
         return ResponseEntity.ok(logs);
+    }
+
+    @DeleteMapping("/logs/{id}")
+    public ResponseEntity<Void> deleteLog(@PathVariable Long id) {
+        requestLogRepository.deleteById(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping("/logs")
+    public ResponseEntity<Void> deleteLogs(@RequestParam(required = false) Long beforeDays) {
+        if (beforeDays != null) {
+            requestLogRepository.deleteByCreatedAtBefore(
+                    java.time.LocalDateTime.now().minusDays(beforeDays));
+        } else {
+            // Delete all logs if no parameter provided
+            requestLogRepository.deleteAll();
+        }
+        return ResponseEntity.noContent().build();
     }
 
     // ==================== 用户管理 ====================
@@ -195,7 +222,9 @@ public class AdminController {
                 request.getUsername(),
                 request.getPassword(),
                 request.getRole(),
-                request.getTokenBalance()
+                request.getRequestCount(),
+                request.getConcurrentLimit(),
+                request.getHourlyLimit()
         );
         return ResponseEntity.status(HttpStatus.CREATED).body(UserResponse.from(user));
     }
@@ -230,8 +259,10 @@ public class AdminController {
                 request.getUsername(),
                 request.getPassword(),
                 request.getRole(),
-                request.getTokenBalance(),
-                null // keep current enabled status
+                request.getRequestCount(),
+                request.getEnabled(),
+                request.getConcurrentLimit(),
+                request.getHourlyLimit()
         );
         if (user == null) return ResponseEntity.notFound().build();
         return ResponseEntity.ok(UserResponse.from(user));
@@ -241,14 +272,42 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> userStats() {
         List<ProxyUser> users = userService.listUsers();
         long totalUsers = users.size();
-        long totalTokens = users.stream().mapToLong(ProxyUser::getTokenBalance).sum();
-        long totalUsed = users.stream().mapToLong(ProxyUser::getTokenUsed).sum();
+        long totalRequests = users.stream().mapToLong(ProxyUser::getRequestCount).sum();
+        long totalUsed = users.stream().mapToLong(ProxyUser::getRequestsUsed).sum();
         return ResponseEntity.ok(Map.of(
                 "totalUsers", totalUsers,
-                "totalTokens", totalTokens,
+                "totalRequests", totalRequests,
                 "totalUsed", totalUsed,
-                "totalRemaining", totalTokens - totalUsed
+                "totalRemaining", totalRequests - totalUsed
         ));
+    }
+
+    private static final String USERNAME_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789";
+    private static final String PASSWORD_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    private static final SecureRandom random = new SecureRandom();
+
+    @PostMapping("/users/generate")
+    public ResponseEntity<?> generateUser(
+            @RequestParam(defaultValue = "10") int passwordLength,
+            @RequestParam(defaultValue = "100") Long requestCount,
+            @RequestParam(defaultValue = "2") Integer concurrentLimit,
+            @RequestParam(defaultValue = "50") Integer hourlyLimit) {
+        String username = "user_" + System.currentTimeMillis();
+        String password = generateRandomString(PASSWORD_CHARS, passwordLength);
+        ProxyUser user = userService.createUser(username, password, "USER", requestCount, concurrentLimit, hourlyLimit);
+        return ResponseEntity.ok(Map.of(
+                "username", user.getUsername(),
+                "password", password,
+                "userToken", user.getUserToken()
+        ));
+    }
+
+    private String generateRandomString(String chars, int length) {
+        StringBuilder sb = new StringBuilder(length);
+        for (int i = 0; i < length; i++) {
+            sb.append(chars.charAt(random.nextInt(chars.length())));
+        }
+        return sb.toString();
     }
 
     // ==================== Token 分配 ====================
@@ -265,5 +324,42 @@ public class AdminController {
     @GetMapping("/users/{id}/tokens")
     public ResponseEntity<List<TokenRecord>> getUserTokenRecords(@PathVariable Long id) {
         return ResponseEntity.ok(userService.getUserTokenRecords(id));
+    }
+
+    // ==================== 管理员密码修改 ====================
+
+    @PostMapping("/change-password")
+    public ResponseEntity<?> changePassword(
+            @RequestHeader("Authorization") String authHeader,
+            @RequestBody Map<String, String> body) {
+        String oldPassword = body.get("oldPassword");
+        String newPassword = body.get("newPassword");
+
+        if (oldPassword == null || newPassword == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "旧密码和新密码不能为空"));
+        }
+        if (newPassword.length() < 3) {
+            return ResponseEntity.badRequest().body(Map.of("error", "新密码长度不能少于3位"));
+        }
+
+        // Decode Basic Auth
+        String base64Credentials = authHeader.substring("Basic ".length());
+        String credentials = new String(java.util.Base64.getDecoder().decode(base64Credentials));
+        String[] parts = credentials.split(":", 2);
+        String username = parts[0];
+
+        AdminUser admin = adminUserRepository.findByUsername(username).orElse(null);
+        if (admin == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "管理员不存在"));
+        }
+
+        if (!passwordEncoder.matches(oldPassword, admin.getPassword())) {
+            return ResponseEntity.status(401).body(Map.of("error", "旧密码错误"));
+        }
+
+        admin.setPassword(passwordEncoder.encode(newPassword));
+        adminUserRepository.save(admin);
+
+        return ResponseEntity.ok(Map.of("message", "密码修改成功"));
     }
 }

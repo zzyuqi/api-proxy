@@ -23,20 +23,35 @@ public class ProxyUser {
     @Column(name = "user_token", unique = true, length = 64)
     private String userToken;
 
-    @Column(name = "token_balance")
-    private Long tokenBalance = 0L;
+    @Column(name = "request_count")
+    private Long requestCount = 0L;
 
-    @Column(name = "token_used")
-    private Long tokenUsed = 0L;
+    @Column(name = "requests_used")
+    private Long requestsUsed = 0L;
+
+    // 并发限制：同一用户最大并发数，0表示不限制
+    @Column(name = "concurrent_limit")
+    private Integer concurrentLimit = 0;
+
+    // 每小时限制：每小时最大请求次数，0表示不限制
+    @Column(name = "hourly_limit")
+    private Integer hourlyLimit = 0;
 
     private Boolean enabled = true;
 
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
 
+    @Column(name = "last_active_at")
+    private LocalDateTime lastActiveAt;
+
+    @Column(name = "expire_at")
+    private LocalDateTime expireAt;
+
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();
+        lastActiveAt = LocalDateTime.now();
     }
 
     public Long getId() { return id; }
@@ -49,11 +64,19 @@ public class ProxyUser {
     public void setRole(String role) { this.role = role; }
     public String getUserToken() { return userToken; }
     public void setUserToken(String userToken) { this.userToken = userToken; }
-    public Long getTokenBalance() { return tokenBalance; }
-    public void setTokenBalance(Long tokenBalance) { this.tokenBalance = tokenBalance; }
-    public Long getTokenUsed() { return tokenUsed; }
-    public void setTokenUsed(Long tokenUsed) { this.tokenUsed = tokenUsed; }
+    public Long getRequestCount() { return requestCount; }
+    public void setRequestCount(Long requestCount) { this.requestCount = requestCount; }
+    public Long getRequestsUsed() { return requestsUsed; }
+    public void setRequestsUsed(Long requestsUsed) { this.requestsUsed = requestsUsed; }
+    public Integer getConcurrentLimit() { return concurrentLimit; }
+    public void setConcurrentLimit(Integer concurrentLimit) { this.concurrentLimit = concurrentLimit; }
+    public Integer getHourlyLimit() { return hourlyLimit; }
+    public void setHourlyLimit(Integer hourlyLimit) { this.hourlyLimit = hourlyLimit; }
     public Boolean getEnabled() { return enabled; }
     public void setEnabled(Boolean enabled) { this.enabled = enabled; }
     public LocalDateTime getCreatedAt() { return createdAt; }
+    public LocalDateTime getLastActiveAt() { return lastActiveAt; }
+    public void setLastActiveAt(LocalDateTime lastActiveAt) { this.lastActiveAt = lastActiveAt; }
+    public LocalDateTime getExpireAt() { return expireAt; }
+    public void setExpireAt(LocalDateTime expireAt) { this.expireAt = expireAt; }
 }

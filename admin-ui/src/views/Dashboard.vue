@@ -1,5 +1,10 @@
 <template>
   <div>
+    <div class="page-header">
+      <h2>控制台</h2>
+      <el-button type="primary" @click="passwordVisible = true">修改密码</el-button>
+    </div>
+
     <div class="stat-cards">
       <div class="stat-card">
         <div class="stat-label">路由规则</div>
@@ -39,14 +44,37 @@
         </el-descriptions-item>
       </el-descriptions>
     </el-card>
+
+    <!-- Change password dialog -->
+    <el-dialog v-model="passwordVisible" title="修改管理员密码" width="400px">
+      <el-form :model="passwordForm" label-width="100px">
+        <el-form-item label="旧密码">
+          <el-input v-model="passwordForm.oldPassword" type="password" show-password />
+        </el-form-item>
+        <el-form-item label="新密码">
+          <el-input v-model="passwordForm.newPassword" type="password" show-password />
+        </el-form-item>
+        <el-form-item label="确认新密码">
+          <el-input v-model="passwordForm.confirmPassword" type="password" show-password />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="passwordVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleChangePassword" :loading="changing">确认修改</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { getRoutes, getApiKeys, getLogs } from '../api/index.js'
+import { ElMessage } from 'element-plus'
+import { getRoutes, getApiKeys, getLogs, changePassword } from '../api/index.js'
 
 const stats = ref({ routes: 0, keys: 0, todayLogs: 0, totalLogs: 0 })
+const passwordVisible = ref(false)
+const changing = ref(false)
+const passwordForm = ref({ oldPassword: '', newPassword: '', confirmPassword: '' })
 
 onMounted(async () => {
   try {
@@ -58,4 +86,43 @@ onMounted(async () => {
     stats.value.totalLogs = logs.data.totalElements || 0
   } catch (e) { /* ignore */ }
 })
+
+async function handleChangePassword() {
+  if (!passwordForm.value.oldPassword) {
+    ElMessage.error('请输入旧密码')
+    return
+  }
+  if (!passwordForm.value.newPassword) {
+    ElMessage.error('请输入新密码')
+    return
+  }
+  if (passwordForm.value.newPassword.length < 3) {
+    ElMessage.error('新密码长度不能少于3位')
+    return
+  }
+  if (passwordForm.value.newPassword !== passwordForm.value.confirmPassword) {
+    ElMessage.error('两次输入的新密码不一致')
+    return
+  }
+
+  changing.value = true
+  try {
+    await changePassword(passwordForm.value.oldPassword, passwordForm.value.newPassword)
+    ElMessage.success('密码修改成功')
+    passwordVisible.value = false
+    passwordForm.value = { oldPassword: '', newPassword: '', confirmPassword: '' }
+  } catch (e) {
+    ElMessage.error(e.response?.data?.error || '密码修改失败')
+  }
+  changing.value = false
+}
 </script>
+
+<style scoped>
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+</style>

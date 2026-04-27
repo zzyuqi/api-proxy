@@ -21,7 +21,7 @@
       <div v-if="error" class="register-error">{{ error }}</div>
       <div style="text-align:center;margin-top:12px">
         已有账号？
-        <router-link to="/user" style="color:#409eff">去登录</router-link>
+        <router-link to="/login" style="color:#409eff">去登录</router-link>
       </div>
     </el-card>
   </div>

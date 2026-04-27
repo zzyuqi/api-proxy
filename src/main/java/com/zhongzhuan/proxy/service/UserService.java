@@ -7,6 +7,7 @@ import com.zhongzhuan.proxy.repository.TokenRecordRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -24,23 +25,33 @@ public class UserService {
     }
 
     @Transactional
-    public ProxyUser createUser(String username, String password, String role, Long initialTokens) {
+    public ProxyUser createUser(String username, String password, String role, Long initialRequests,
+                               Integer concurrentLimit, Integer hourlyLimit) {
+        return createUser(username, password, role, initialRequests, concurrentLimit, hourlyLimit, LocalDateTime.now().plusDays(30));
+    }
+
+    @Transactional
+    public ProxyUser createUser(String username, String password, String role, Long initialRequests,
+                               Integer concurrentLimit, Integer hourlyLimit, LocalDateTime expireAt) {
         ProxyUser user = new ProxyUser();
         user.setUsername(username);
-        user.setPassword(password); // plain text so admin can view/edit
+        user.setPassword(password);
         user.setRole(role != null ? role : "USER");
         user.setUserToken(generateToken());
-        user.setTokenBalance(initialTokens != null ? initialTokens : 0L);
-        user.setTokenUsed(0L);
+        user.setRequestCount(initialRequests != null ? initialRequests : 0L);
+        user.setRequestsUsed(0L);
+        user.setConcurrentLimit(concurrentLimit != null ? concurrentLimit : 0);
+        user.setHourlyLimit(hourlyLimit != null ? hourlyLimit : 0);
         user.setEnabled(true);
+        user.setExpireAt(expireAt);
         ProxyUser saved = userRepository.save(user);
 
-        if (initialTokens != null && initialTokens > 0) {
+        if (initialRequests != null && initialRequests > 0) {
             TokenRecord record = new TokenRecord();
             record.setUserId(saved.getId());
-            record.setAmount(initialTokens);
+            record.setAmount(initialRequests);
             record.setType("ALLOCATE");
-            record.setNote("初始分配");
+            record.setNote("初始分配请求次数");
             tokenRecordRepository.save(record);
         }
 
@@ -60,35 +71,36 @@ public class UserService {
     }
 
     @Transactional
-    public ProxyUser updateUser(Long id, String username, String password, String role, Long tokenBalance, Boolean enabled) {
+    public ProxyUser updateUser(Long id, String username, String password, String role, Long requestCount,
+                                Boolean enabled, Integer concurrentLimit, Integer hourlyLimit) {
         ProxyUser user = userRepository.findById(id).orElse(null);
         if (user == null) return null;
         if (username != null) user.setUsername(username);
         if (password != null) user.setPassword(password);
         if (role != null) user.setRole(role);
-        if (tokenBalance != null) {
-            user.setTokenBalance(tokenBalance);
-            // If balance increased, record the allocation
-            // (simple approach — no record for direct edits)
+        if (requestCount != null) {
+            user.setRequestCount(requestCount);
         }
         if (enabled != null) user.setEnabled(enabled);
+        if (concurrentLimit != null) user.setConcurrentLimit(concurrentLimit);
+        if (hourlyLimit != null) user.setHourlyLimit(hourlyLimit);
         return userRepository.save(user);
     }
 
     @Transactional
-    public boolean deductTokens(Long userId, long amount, String note) {
+    public boolean incrementRequestUsage(Long userId, String note) {
         ProxyUser user = userRepository.findById(userId).orElse(null);
         if (user == null) return false;
 
-        long remaining = user.getTokenBalance() - user.getTokenUsed();
-        if (remaining < amount) return false;
+        long remaining = user.getRequestCount() - user.getRequestsUsed();
+        if (remaining <= 0) return false;
 
-        user.setTokenUsed(user.getTokenUsed() + amount);
+        user.setRequestsUsed(user.getRequestsUsed() + 1);
         userRepository.save(user);
 
         TokenRecord record = new TokenRecord();
         record.setUserId(userId);
-        record.setAmount(amount);
+        record.setAmount(1L);
         record.setType("USE");
         record.setNote(note);
         tokenRecordRepository.save(record);
@@ -101,7 +113,7 @@ public class UserService {
         ProxyUser user = userRepository.findById(userId).orElse(null);
         if (user == null) return null;
 
-        user.setTokenBalance(user.getTokenBalance() + amount);
+        user.setRequestCount(user.getRequestCount() + amount);
         ProxyUser saved = userRepository.save(user);
 
         TokenRecord record = new TokenRecord();
@@ -109,7 +121,7 @@ public class UserService {
         record.setAdminId(adminId);
         record.setAmount(amount);
         record.setType(amount > 0 ? "ALLOCATE" : "DEDUCT");
-        record.setNote(note);
+        record.setNote(note != null ? note : "分配请求次数");
         tokenRecordRepository.save(record);
 
         return saved;
@@ -134,6 +146,14 @@ public class UserService {
 
     public List<TokenRecord> getUserTokenRecords(Long userId) {
         return tokenRecordRepository.findByUserIdOrderByCreatedAtDesc(userId);
+    }
+
+    @Transactional
+    public void updateLastActive(Long userId) {
+        userRepository.findById(userId).ifPresent(user -> {
+            user.setLastActiveAt(java.time.LocalDateTime.now());
+            userRepository.save(user);
+        });
     }
 
     public long countUsers() {

@@ -2,6 +2,7 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 
 const routes = [
   { path: '/login', name: 'Login', component: () => import('../views/Login.vue') },
+  { path: '/admin-login', name: 'AdminLogin', component: () => import('../views/AdminLogin.vue') },
   { path: '/register', name: 'Register', component: () => import('../views/Register.vue') },
   {
     path: '/',
@@ -29,7 +30,7 @@ router.beforeEach((to, from, next) => {
   const userAuth = !!localStorage.getItem('user_auth')
 
   // Public pages that anyone can access
-  if (to.path === '/login') {
+  if (to.path === '/login' || to.path === '/admin-login') {
     if (adminAuth) {
       next('/dashboard')
     } else if (userAuth) {
